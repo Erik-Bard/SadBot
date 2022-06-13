@@ -10,22 +10,10 @@ namespace SadBot.Core.Modules
 {
     public class UserModule : ModuleBase<SocketCommandContext>
 	{
-		// ~sample square 20 -> 400
-		[Command("square")]
-		[Summary("Squares a number.")]
-		public async Task SquareAsync([Summary("The number to square.")]
-		int num)
-		{
-			// We can also access the channel from the Command Context.
-			await Context.Channel.SendMessageAsync($"{num}^2 = {Math.Pow(num, 2)}");
-		}
-
-		// ~sample userinfo --> foxbot#0282
-		// ~sample userinfo @Khionu --> Khionu#8708
-		// ~sample userinfo Khionu#8708 --> Khionu#8708
-		// ~sample userinfo Khionu --> Khionu#8708
-		// ~sample userinfo 96642168176807936 --> Khionu#8708
-		// ~sample whois 96642168176807936 --> Khionu#8708
+		// userinfo --> username#0282
+		// userinfo @username
+		// userinfo 96642168176807936
+		// whois (name)
 		[Command("userinfo")]
 		[Summary
 		("Returns info about the current user, or the user parameter, if one passed.")]

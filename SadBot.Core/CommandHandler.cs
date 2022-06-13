@@ -1,75 +1,60 @@
-﻿using Discord.Commands;
+﻿using Discord;
+using Discord.Addons.Hosting;
+using Discord.Commands;
 using Discord.WebSocket;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using SadBot.Core.Modules;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SadBot.Core
 {
-    public class CommandHandler
+    public class CommandHandler : DiscordClientService
     {
-        private readonly DiscordSocketClient _client;
-        private readonly CommandService _commands;
-        private IServiceProvider _services;
+        private readonly IServiceProvider _provider;
+        private readonly CommandService _commandService;
+        private readonly IConfiguration _config;
+        private readonly DiscordSocketClient _socketClient;
 
-        public CommandHandler(DiscordSocketClient client, CommandService commands)
+        public CommandHandler(DiscordSocketClient client, ILogger<CommandHandler> logger, IServiceProvider provider, CommandService commandService, IConfiguration config)
+            : base(client, logger)
         {
-            _commands = commands;
-            _client = client;
+            _provider = provider;
+            _commandService = commandService;
+            _config = config;
+            _socketClient = client;
         }
-
-        public async Task InstallCommandsAsync(IServiceProvider services)
+        private async Task InstallCommandsAsync(IServiceProvider services)
         {
-            // Hook the MessageReceived event into our command handler
-            _client.MessageReceived += HandleCommandAsync;
-            // Either search the program and add all Module classes that can be found.
-            // Module classes MUST be marked 'public' or they will be ignored.
-            // You also need to pass your 'IServiceProvider' instance now,
-            // so make sure that's done before you get here.
-            await _commands.AddModulesAsync(Assembly.GetEntryAssembly(), services);
-            // Or add Modules manually if you prefer to be a little more explicit:
-            await _commands.AddModuleAsync<InfoModule>(services);
-            await _commands.AddModuleAsync<UserModule>(services);
-            await _commands.AddModuleAsync<GifModule>(services);
-
-            _services = services;
+            await _commandService.AddModuleAsync<InfoModule>(services);
+            await _commandService.AddModuleAsync<UserModule>(services);
+            await _commandService.AddModuleAsync<GifModule>(services);
         }
-
         private async Task HandleCommandAsync(SocketMessage arg)
         {
-            // Bail out if it's a System Message.
             var msg = arg as SocketUserMessage;
             if (msg == null) return;
 
-            // We don't want the bot to respond to itself or other bots.
-            if (msg.Author.Id == _client.CurrentUser.Id || msg.Author.IsBot) return;
+            if (msg.Author.Id == _socketClient.CurrentUser.Id || msg.Author.IsBot) return;
 
-            // Create a number to track where the prefix ends and the command begins
             int pos = 0;
-            // Replace the '!' with whatever character
-            // you want to prefix your commands with.
-            // Uncomment the second half if you also want
-            // commands to be invoked by mentioning the bot instead.
-            if (msg.HasCharPrefix('!', ref pos) /* || msg.HasMentionPrefix(_client.CurrentUser, ref pos) */)
+            if(msg.HasCharPrefix('!', ref pos))
             {
-                // Create a Command Context.
-                var context = new SocketCommandContext(_client, msg);
+                var context = new SocketCommandContext(_socketClient, msg);
+                var result = await _commandService.ExecuteAsync(context, pos, _provider);
 
-                // Execute the command. (result does not indicate a return value, 
-                // rather an object stating if the command executed successfully).
-                var result = await _commands.ExecuteAsync(context, pos, _services);
-
-                // Uncomment the following lines if you want the bot
-                // to send a message if it failed.
-                // This does not catch errors from commands with 'RunMode.Async',
-                // subscribe a handler for '_commands.CommandExecuted' to see those.
                 if (!result.IsSuccess && result.Error != CommandError.UnknownCommand)
-                    await msg.Channel.SendMessageAsync(result.ErrorReason);
+                    await msg.Channel.SendMessageAsync($"You're an idiot, @{msg.Author}");
             }
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _socketClient.MessageReceived += HandleCommandAsync;
+            //_commandService.CommandExecuted += HandleCommandAsync;
+            await InstallCommandsAsync(_provider);
         }
     }
 }

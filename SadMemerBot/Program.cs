@@ -1,11 +1,15 @@
 ﻿using Discord;
+using Discord.Addons.Hosting;
 using Discord.Commands;
 using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using SadBot.Core;
+using SadBot.Core.Configuration;
+using SadBot.Core.Services;
+using SadBot.Core.Workers;
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using TenorSharp;
 
@@ -14,13 +18,10 @@ namespace SadMemerBot
     public class Program
     {
         private DiscordSocketClient _client;
-
-        // Keep the CommandService and DI container around for use with commands.
-        // These two types require you install the Discord.Net.Commands package.
         private readonly CommandService _commands;
-        private readonly IServiceProvider _services;
         private readonly IConfiguration _config;
-        private CommandHandler _handler;
+        private string tenorKey;
+
         private Program()
         {
             _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -44,49 +45,56 @@ namespace SadMemerBot
                 CaseSensitiveCommands = false,
             });
 
-            // Subscribe the logging handler to both the client and the CommandService.
             _client.Log += Log;
             _commands.Log += Log;
 
-            // Setup Environment
             var builder = new ConfigurationBuilder()
               .AddJsonFile($"appsettings.json", true, true)
               .AddUserSecrets<Program>()
               .AddEnvironmentVariables();
             _config = builder.Build();
 
-            var tenorKey = _config.GetRequiredSection("TenorKey").Value;
-            // Setup your DI container.
-            _services = ConfigureServices(_client, _commands, tenorKey);
-            _handler = _services.GetRequiredService<CommandHandler>();
+            tenorKey = _config.GetRequiredSection("TenorKey").Value;
         }
 
         public static Task Main(string[] args) => new Program().MainAsync();
 
-        // If any services require the client, or the CommandService, or something else you keep on hand,
-        // pass them as parameters into this method as needed.
-        // If this method is getting pretty long, you can seperate it out into another file using partials.
-        private static IServiceProvider ConfigureServices(DiscordSocketClient client, CommandService commandService, string tenorKey)
-        {
-            var map = new ServiceCollection()
-                // Repeat this for all the service classes
-                // and other dependencies that your commands might need.
-                .AddSingleton(new CommandHandler(client, commandService))
-                .AddSingleton(new TenorClient(tenorKey));
-            return map.BuildServiceProvider();
-        }
-
         public async Task MainAsync()
         {
-            var myToken = _config.GetRequiredSection("DiscordToken").Value;
-            // Centralize the logic for commands into a separate method.
-            await _handler.InstallCommandsAsync(_services);
-            // Login and connect.
-            await _client.LoginAsync(TokenType.Bot, myToken);
-            await _client.StartAsync();
+            var host = Host.CreateDefaultBuilder()
+            .ConfigureDiscordHost((context, config) =>
+            {
+                config.SocketConfig = new DiscordSocketConfig
+                {
+                    LogLevel = LogSeverity.Verbose,
+                    AlwaysDownloadUsers = true,
+                    MessageCacheSize = 200
+                };
+                config.Token = _config.GetRequiredSection("DiscordToken").Value;
+            })
+            // Optionally wire up the command service
+            .UseCommandService((context, config) =>
+            {
+                config.DefaultRunMode = RunMode.Async;
+                config.CaseSensitiveCommands = false;
+            })
+            // Optionally wire up the interactions service
+            .UseInteractionService((context, config) =>
+            {
+                config.LogLevel = LogSeverity.Info;
+                config.UseCompiledLambda = true;
+            })
+            .ConfigureServices((context, services) =>
+            {
+                //Add any other services here
+                services.Configure<DiscordKeyOptions>(_config.GetSection(DiscordKeyOptions.DiscordSettings));
+                services.AddSingleton(new TenorClient(tenorKey));
+                services.AddHostedService<CommandHandler>();
+                services.AddHostedService<BotStatusService>();
+                services.AddHostedService<WorkerService>();
+            }).Build();
 
-            // Wait infinitely so your bot actually stays connected.
-            await Task.Delay(Timeout.Infinite);
+            await host.RunAsync();
         }
 
         private static Task Log(LogMessage message)
@@ -111,12 +119,7 @@ namespace SadMemerBot
             Console.WriteLine($"{DateTime.Now,-19} [{message.Severity,8}] {message.Source}: {message.Message} {message.Exception}");
             Console.ResetColor();
 
-            // If you get an error saying 'CompletedTask' doesn't exist,
-            // your project is targeting .NET 4.5.2 or lower. You'll need
-            // to adjust your project's target framework to 4.6 or higher
-            // (instructions for this are easily Googled).
-            // If you *need* to run on .NET 4.5 for compat/other reasons,
-            // the alternative is to 'return Task.Delay(0);' instead.
+
             return Task.CompletedTask;
         }
     }
